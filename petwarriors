@@ -1,0 +1,384 @@
+-- Pet Warriors - Mining Script
+
+local Library = loadstring(game:HttpGet("https://github.com/ActualMasterOogway/Fluent-Renewed/releases/latest/download/Fluent.luau"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/SaveManager.luau"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
+
+local Window = Library:Window{
+    Title = "Pet Warriors - Mining",
+    SubTitle = "Script Hub",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Resize = false,
+    Acrylic = true,
+    Theme = "Vynixu",
+    MinimizeKey = Enum.KeyCode.LeftShift
+}
+
+local Tabs = {
+    Mining = Window:AddTab({ Title = "Mining", Icon = "pickaxe" }),
+}
+
+local selectblock = Tabs.Mining:AddSection("Auto Mine")
+
+-- Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local Knit = require(ReplicatedStorage.Shared.Packages.Knit)
+local RunService = game:GetService("RunService")
+local BlocksEnum = require(ReplicatedStorage.Shared.Enums.Minigames.Blocks)
+local MinesData = require(ReplicatedStorage.Shared.Balancing.Shared.Minigames.Mines.Mines)
+
+-- Wait for Knit to initialize
+if not Knit.IsStarted then
+    Knit.OnStart():await()
+end
+
+local MiningSiteController = Knit.GetController("MiningSiteController")
+local BlocksDefinition = require(ReplicatedStorage.Shared.Balancing.Shared.Minigames.Mines.Blocks)
+local MiningSiteRemote = ReplicatedStorage.Shared.Packages.Knit.Services.MiningSiteService.RE.Hit
+
+
+-- Build mapping: MaxHealth -> Block Name
+local maxHealthToBlockName = {}
+for _, blockData in pairs(BlocksDefinition) do
+    if blockData.Health and blockData.Name then
+        maxHealthToBlockName[blockData.Health] = blockData.Name
+    end
+end
+
+-- Build block list for dropdown
+local blockNames = {}
+for _, blockData in pairs(BlocksDefinition) do
+    if blockData.Name ~= "Air" and blockData.Name ~= "Indestructible" then
+        table.insert(blockNames, blockData.Name)
+    end
+end
+table.sort(blockNames)
+
+-- Block priorities
+local blockPriorities = {}
+local nextPriority = 1
+
+-- Priority paragraph
+local blockPriorityParagraph = selectblock:AddParagraph("MinePriority", {
+    Title = "Mining Priority",
+    Content = "No blocks selected",
+    TitleAlignment = "Middle",
+    ContentAlignment = Enum.TextXAlignment.Left
+})
+
+local function updateBlockPriorityDisplay()
+    local prioritized = {}
+    for name, priority in pairs(blockPriorities) do
+        table.insert(prioritized, {name = name, priority = priority})
+    end
+    table.sort(prioritized, function(a,b) return a.priority < b.priority end)
+
+    if #prioritized == 0 then
+        blockPriorityParagraph:SetValue("No blocks selected")
+        return
+    end
+
+    local text = "Priority order:\n"
+    for i, item in ipairs(prioritized) do
+        text = text .. i .. ". " .. item.name .. "\n"
+    end
+    blockPriorityParagraph:SetValue(text)
+end
+
+-- Dropdown for block selection
+selectblock:AddDropdown("BlockSelect", {
+    Title = "Select Blocks to Mine",
+    Description = "Blocks will be prioritized in the order you select them. First selected = highest priority.",
+    Values = blockNames,
+    Multi = true,
+    Searchable = true,
+    Default = {},
+    Callback = function(value)
+        local currentlySelected = {}
+        for name, selected in pairs(value) do
+            if selected then currentlySelected[name] = true end
+        end
+
+        -- Remove deselected blocks
+        for name in pairs(blockPriorities) do
+            if not currentlySelected[name] then
+                blockPriorities[name] = nil
+            end
+        end
+
+        -- Add newly selected blocks with incrementing priority
+        for name, selected in pairs(value) do
+            if selected and not blockPriorities[name] then
+                blockPriorities[name] = nextPriority
+                nextPriority = nextPriority + 1
+            end
+        end
+
+        updateBlockPriorityDisplay()
+    end
+})
+
+-- Get all blocks from controller
+local function getAllBlocks()
+    local blocks = {}
+    for mineId, mineBlocks in pairs(MiningSiteController.Mines) do
+        for blockKey, blockData in pairs(mineBlocks) do
+            if blockData.Health and blockData.Health >= 0 then
+                local blockName = maxHealthToBlockName[blockData.MaxHealth] or "Unknown"
+                local yPos = 0
+                if blockData.Visual then
+                    yPos = blockData.Visual:GetPivot().Position.Y
+                end
+                table.insert(blocks, {
+                    mineId = mineId,
+                    blockKey = blockKey,
+                    health = blockData.Health,
+                    maxHealth = blockData.MaxHealth,
+                    name = blockName,
+                    position = blockData.Visual and blockData.Visual:GetPivot().Position or Vector3.new(),
+                    y = yPos
+                })
+            end
+        end
+    end
+    return blocks
+end
+
+-- Find highest priority block
+local function findPriorityBlock()
+    local allBlocks = getAllBlocks()
+    if #allBlocks == 0 then return nil end
+
+    -- Group by type
+    local blocksByType = {}
+    for _, block in ipairs(allBlocks) do
+        if not blocksByType[block.name] then blocksByType[block.name] = {} end
+        table.insert(blocksByType[block.name], block)
+    end
+
+    -- Sort priorities
+    local prioritized = {}
+    for name, priority in pairs(blockPriorities) do
+        table.insert(prioritized, {name = name, priority = priority})
+    end
+    table.sort(prioritized, function(a,b) return a.priority < b.priority end)
+
+    for _, item in ipairs(prioritized) do
+        local blkName = item.name
+        if blocksByType[blkName] and #blocksByType[blkName] > 0 then
+            table.sort(blocksByType[blkName], function(a,b)
+                if a.health == b.health then return a.y < b.y end
+                return a.health < b.health
+            end)
+            return blocksByType[blkName][1]
+        end
+    end
+
+    -- fallback: lowest Y
+    table.sort(allBlocks, function(a,b)
+        if a.y == b.y then return a.health < b.health end
+        return a.y < b.y
+    end)
+    return allBlocks[1]
+end
+
+-- Check if block still exists
+local function blockExists(mineId, blockKey)
+    return MiningSiteController.Mines[mineId] and 
+           MiningSiteController.Mines[mineId][blockKey] and 
+           MiningSiteController.Mines[mineId][blockKey].Health and 
+           MiningSiteController.Mines[mineId][blockKey].Health > 0
+end
+
+-- AutoMine toggle
+local autoMineEnabled = false
+local autoMineConnection = nil
+local currentTargetBlock = nil
+
+selectblock:AddToggle("AutoMine", {
+    Title = "Auto Mine",
+    Description = "Automatically mines blocks according to priority",
+    Default = false,
+    Callback = function(value)
+        autoMineEnabled = value
+
+        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        if value then
+            -- Add BodyVelocity to lock movement
+            local bv = Instance.new("BodyVelocity")
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+            bv.Parent = hrp
+
+            autoMineConnection = RunService.Heartbeat:Connect(function()
+                if not autoMineEnabled then return end
+                
+                -- If no current target or current target is destroyed, find new target
+                if not currentTargetBlock or not blockExists(currentTargetBlock.mineId, currentTargetBlock.blockKey) then
+                    currentTargetBlock = findPriorityBlock()
+                    if not currentTargetBlock then
+                        -- No blocks available, find any block as fallback
+                        local allBlocks = getAllBlocks()
+                        if #allBlocks > 0 then
+                            table.sort(allBlocks, function(a,b)
+                                if a.y == b.y then return a.health < b.health end
+                                return a.y < b.y
+                            end)
+                            currentTargetBlock = allBlocks[1]
+                        end
+                    end
+                end
+                
+                -- Mine current target if it exists
+                if currentTargetBlock and blockExists(currentTargetBlock.mineId, currentTargetBlock.blockKey) then
+                    -- Teleport to block position
+                    hrp.CFrame = CFrame.new(currentTargetBlock.position)
+                    -- Fire mining remote
+                    MiningSiteRemote:FireServer(currentTargetBlock.mineId, currentTargetBlock.blockKey)
+                end
+            end)
+        else
+            -- Stop auto mining
+            if autoMineConnection then
+                autoMineConnection:Disconnect()
+                autoMineConnection = nil
+            end
+            currentTargetBlock = nil
+            
+            -- Remove BodyVelocity to restore movement
+            for _, bv in ipairs(hrp:GetChildren()) do
+                if bv:IsA("BodyVelocity") then bv:Destroy() end
+            end
+        end
+    end
+})
+
+local BlocksEnum = require(ReplicatedStorage.Shared.Enums.Minigames.Blocks)
+local MinesData = require(ReplicatedStorage.Shared.Balancing.Shared.Minigames.Mines.Mines)
+
+-- Build BlockId <-> Name mapping for readability
+local BlockIdToName = {}
+for name, id in pairs(BlocksEnum) do
+    BlockIdToName[id] = name
+end
+
+-- Table to store min/max Y for each blockId
+local BlockYRanges = {}
+for _, areaData in pairs(MinesData) do
+    if areaData.Layers then
+        for _, layer in ipairs(areaData.Layers) do
+            if layer.LootPlan and layer.LootPlan.Rewards then
+                for blockId in pairs(layer.LootPlan.Rewards) do
+                    if not BlockYRanges[blockId] then
+                        BlockYRanges[blockId] = {MinY = layer.MinY, MaxY = layer.MaxY}
+                    else
+                        BlockYRanges[blockId].MinY = math.min(BlockYRanges[blockId].MinY, layer.MinY)
+                        BlockYRanges[blockId].MaxY = math.max(BlockYRanges[blockId].MaxY, layer.MaxY)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Print all block min/max Y once at startup
+for blockId, range in pairs(BlockYRanges) do
+    local blockName = BlockIdToName[blockId] or tostring(blockId)
+    print(string.format("Block: %s -> MinY: %s, MaxY: %s", blockName, range.MinY, range.MaxY))
+end
+-- ...existing code...
+
+task.spawn(function()
+    while true do
+        -- Find the block name with priority 1 (ignore spaces)
+        local priorityBlockName = nil
+        local lowestPriority = math.huge
+        for name, priority in pairs(blockPriorities) do
+            if priority < lowestPriority then
+                lowestPriority = priority
+                priorityBlockName = name
+            end
+        end
+
+        if priorityBlockName then
+            -- Remove spaces for comparison
+            local priorityBlockNameNoSpaces = priorityBlockName:gsub("%s+", "")
+
+            -- Find the blockId for this block name (ignore spaces)
+            local blockId = nil
+            for id, name in pairs(BlockIdToName) do
+                if name:gsub("%s+", "") == priorityBlockNameNoSpaces then
+                    blockId = id
+                    break
+                end
+            end
+
+            if blockId and BlockYRanges[blockId] then
+                local maxY = BlockYRanges[blockId].MaxY
+                print(string.format("Priority 1 Block '%s' MaxY-1: %s", priorityBlockName, tostring(maxY - 1)))
+            else
+                print("Priority 1 block not found in BlockYRanges.")
+            end
+        else
+            print("No block selected as priority 1.")
+        end
+
+        task.wait(3)
+    end
+end)
+
+
+-- Toggle for transparent blocks
+local transparentBlocksEnabled = false
+local transparentBlocksConnection = nil
+
+selectblock:AddToggle("TransparentBlocks", {
+    Title = "Transparent Blocks",
+    Description = "Makes all blocks transparent for better visibility",
+    Default = false,
+    Callback = function(value)
+        transparentBlocksEnabled = value
+        
+        -- Function to make blocks transparent
+        local function makeBlocksTransparent()
+            local blocksFolder = workspace:FindFirstChild("__BLOCKS__")
+            if not blocksFolder then return end
+            
+            for _, mine in ipairs(blocksFolder:GetChildren()) do
+                for _, block in ipairs(mine:GetChildren()) do
+                    -- Make block and its descendants transparent
+                    for _, part in ipairs(block:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.Transparency = transparentBlocksEnabled and 0.7 or 0
+                        end
+                    end
+                end
+            end
+        end
+        
+        -- Apply transparency immediately
+        makeBlocksTransparent()
+        
+        if value then
+            -- Set up periodic updates to catch new blocks
+            transparentBlocksConnection = task.spawn(function()
+                while transparentBlocksEnabled do
+                    makeBlocksTransparent()
+                    task.wait(2) -- Update every 10 seconds
+                end
+            end)
+        else
+            -- Stop periodic updates
+            if transparentBlocksConnection then
+                task.cancel(transparentBlocksConnection)
+                transparentBlocksConnection = nil
+            end
+        end
+    end
+})
