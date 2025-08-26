@@ -2,6 +2,7 @@ local Library = loadstring(game:HttpGet("https://github.com/ActualMasterOogway/F
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/SaveManager.luau"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/ActualMasterOogway/Fluent-Renewed/master/Addons/InterfaceManager.luau"))()
 
+
 local Window = Library:Window{
     Title = "Pet Warriors - Mining",
     SubTitle = "Script Hub",
@@ -13,11 +14,14 @@ local Window = Library:Window{
     MinimizeKey = Enum.KeyCode.LeftShift
 }
 
+
 local Tabs = {
     Mining = Window:AddTab({ Title = "Mining", Icon = "pickaxe" }),
 }
 
+
 local selectblock = Tabs.Mining:AddSection("Auto Mine")
+
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,14 +33,17 @@ local RunService = game:GetService("RunService")
 local BlocksEnum = require(ReplicatedStorage.Shared.Enums.Minigames.Blocks)
 local MinesData = require(ReplicatedStorage.Shared.Balancing.Shared.Minigames.Mines.Mines)
 
+
 -- Wait for Knit to initialize
 if not Knit.IsStarted then
     Knit.OnStart():await()
 end
 
+
 local MiningSiteController = Knit.GetController("MiningSiteController")
 local BlocksDefinition = require(ReplicatedStorage.Shared.Balancing.Shared.Minigames.Mines.Blocks)
 local MiningSiteRemote = ReplicatedStorage.Shared.Packages.Knit.Services.MiningSiteService.RE.Hit
+
 
 -- Build mapping: MaxHealth -> Block Name
 local maxHealthToBlockName = {}
@@ -45,6 +52,7 @@ for _, blockData in pairs(BlocksDefinition) do
         maxHealthToBlockName[blockData.Health] = blockData.Name
     end
 end
+
 
 -- Build block list for dropdown
 local blockNames = {}
@@ -55,9 +63,11 @@ for _, blockData in pairs(BlocksDefinition) do
 end
 table.sort(blockNames)
 
+
 -- Block priorities
 local blockPriorities = {}
 local nextPriority = 1
+
 
 -- Priority paragraph
 local blockPriorityParagraph = selectblock:AddParagraph("MinePriority", {
@@ -67,6 +77,7 @@ local blockPriorityParagraph = selectblock:AddParagraph("MinePriority", {
     ContentAlignment = Enum.TextXAlignment.Left
 })
 
+
 local function updateBlockPriorityDisplay()
     local prioritized = {}
     for name, priority in pairs(blockPriorities) do
@@ -74,10 +85,12 @@ local function updateBlockPriorityDisplay()
     end
     table.sort(prioritized, function(a,b) return a.priority < b.priority end)
 
+
     if #prioritized == 0 then
         blockPriorityParagraph:SetValue("No blocks selected")
         return
     end
+
 
     local text = "Priority order:\n"
     for i, item in ipairs(prioritized) do
@@ -85,6 +98,7 @@ local function updateBlockPriorityDisplay()
     end
     blockPriorityParagraph:SetValue(text)
 end
+
 
 -- Dropdown for block selection
 selectblock:AddDropdown("BlockSelect", {
@@ -100,12 +114,14 @@ selectblock:AddDropdown("BlockSelect", {
             if selected then currentlySelected[name] = true end
         end
 
+
         -- Remove deselected blocks
         for name in pairs(blockPriorities) do
             if not currentlySelected[name] then
                 blockPriorities[name] = nil
             end
         end
+
 
         -- Add newly selected blocks with incrementing priority
         for name, selected in pairs(value) do
@@ -115,15 +131,18 @@ selectblock:AddDropdown("BlockSelect", {
             end
         end
 
+
         updateBlockPriorityDisplay()
     end
 })
+
 
 -- BlockId <-> Name mapping for readability
 local BlockIdToName = {}
 for name, id in pairs(BlocksEnum) do
     BlockIdToName[id] = name
 end
+
 
 -- Table to store min/max Y for each blockId
 local BlockYRanges = {}
@@ -144,11 +163,8 @@ for _, areaData in pairs(MinesData) do
     end
 end
 
-for blockId, range in pairs(BlockYRanges) do
-    local blockName = BlockIdToName[blockId] or tostring(blockId)
-end
 
--- Helper: Get target Y for priority 1 block (no subtraction, cap at 98)
+-- Helper: Get target Y for the highest priority block (for fallback horizontal mining)
 local function getPriorityBlockTargetY()
     local priorityBlockName = nil
     local lowestPriority = math.huge
@@ -158,6 +174,7 @@ local function getPriorityBlockTargetY()
             priorityBlockName = name
         end
     end
+
 
     if priorityBlockName then
         local priorityBlockNameNoSpaces = priorityBlockName:gsub("%s+", "")
@@ -177,6 +194,7 @@ local function getPriorityBlockTargetY()
     end
     return nil
 end
+
 
 -- Get all blocks from controller
 local function getAllBlocks()
@@ -204,38 +222,41 @@ local function getAllBlocks()
     return blocks
 end
 
--- Find selected blocks at any Y level (priority mining)
-local function findSelectedBlocksAnywhere()
+
+-- NEW: Finds the highest-priority selected block that currently exists, at any location.
+local function findHighestPriorityBlockAnywhere()
     local allBlocks = getAllBlocks()
     local validBlocks = {}
     
+    -- Filter for blocks that are in the priority list
     for _, block in ipairs(allBlocks) do
         if blockPriorities[block.name] then
-            local keyY = tonumber(block.blockKey:match("^%d+%-(%d+)%-%d+$"))
-            local keyX = tonumber(block.blockKey:match("^(%d+)%-%d+%-%d+$"))
-            block.keyY = keyY
-            block.keyX = keyX
             table.insert(validBlocks, block)
         end
     end
 
+    -- If any priority blocks were found, sort them and return the best one
     if #validBlocks > 0 then
-        -- Sort by priority first, then by lowest health
         table.sort(validBlocks, function(a, b)
-            local aPriority = blockPriorities[a.name] or math.huge
-            local bPriority = blockPriorities[b.name] or math.huge
+            local aPriority = blockPriorities[a.name]
+            local bPriority = blockPriorities[b.name]
+            
+            -- Primary sort: by priority number (lower is better)
             if aPriority ~= bPriority then
                 return aPriority < bPriority
             end
+            
+            -- Secondary sort: by health (lower is better)
             return a.health < b.health
         end)
-        return validBlocks[1]
+        return validBlocks[1] -- Return the highest priority block
     end
 
-    return nil
+    return nil -- No priority blocks found anywhere
 end
 
--- Find blocks at target Y with highest X value (when no selected blocks exist)
+
+-- Find blocks at target Y with highest X value (for fallback horizontal mining)
 local function findBlocksAtTargetYWithHighestX(targetY)
     if not targetY then return nil end
 
@@ -266,25 +287,30 @@ local function findBlocksAtTargetYWithHighestX(targetY)
     return nil
 end
 
--- Enhanced auto-mine logic: mine selected blocks first, then mine at target Y with highest X
+-- REWRITTEN: New auto-mine logic:
+-- 1. Find and mine any selected block, anywhere in the mine.
+-- 2. If no selected blocks exist, fall back to mining horizontally at the target Y level.
 local function findPriorityBlockEnhanced()
-    -- First priority: Mine any selected blocks at any Y level
-    local selectedBlock = findSelectedBlocksAnywhere()
-    if selectedBlock then
-        return selectedBlock
+    -- Step 1: Search for any selected block at any height.
+    local priorityBlock = findHighestPriorityBlockAnywhere()
+    if priorityBlock then
+        return priorityBlock -- Found one, mine it.
     end
 
-    -- Second priority: If no selected blocks exist, mine at target Y with highest X
+    -- Step 2: No selected blocks were found. Fall back to horizontal mining.
+    -- Calculate the target Y based on the user's highest priority selection.
     local targetY = getPriorityBlockTargetY()
-    if targetY then
-        return findBlocksAtTargetYWithHighestX(targetY)
+    if not targetY then
+        return nil -- Cannot proceed if no blocks are selected to get a target Y.
     end
 
-    return nil
+    -- Mine horizontally at the calculated Y level (plus one, as per original logic).
+    return findBlocksAtTargetYWithHighestX(targetY + 1)
 end
 
--- Find highest priority block (fallback function)
-local function findPriorityBlock()
+
+-- Find highest priority block (final fallback function if everything else fails)
+local function findPriorityBlockFallback()
     local allBlocks = getAllBlocks()
     if #allBlocks == 0 then return nil end
 
@@ -313,7 +339,7 @@ local function findPriorityBlock()
         end
     end
 
-    -- fallback: lowest Y
+    -- Ultimate fallback: if no priority blocks exist, mine the lowest Y block
     table.sort(allBlocks, function(a,b)
         if a.y == b.y then return a.health < b.health end
         return a.y < b.y
@@ -321,22 +347,25 @@ local function findPriorityBlock()
     return allBlocks[1]
 end
 
+
 -- Check if block still exists
 local function blockExists(mineId, blockKey)
     return MiningSiteController.Mines[mineId] and 
-           MiningSiteController.Mines[mineId][blockKey] and 
-           MiningSiteController.Mines[mineId][blockKey].Health and 
-           MiningSiteController.Mines[mineId][blockKey].Health > 0
+            MiningSiteController.Mines[mineId][blockKey] and 
+            MiningSiteController.Mines[mineId][blockKey].Health and 
+            MiningSiteController.Mines[mineId][blockKey].Health > 0
 end
+
 
 -- AutoMine toggle
 local autoMineEnabled = false
 local autoMineConnection = nil
 local currentTargetBlock = nil
 
+
 selectblock:AddToggle("AutoMine", {
     Title = "Auto Mine",
-    Description = "Mines selected blocks first (any Y), then mines at target Y with highest X when none exist.",
+    Description = "Mines selected blocks at any height. If none are found, mines horizontally at the target Y-level.",
     Default = false,
     Callback = function(value)
         autoMineEnabled = value
@@ -357,9 +386,9 @@ selectblock:AddToggle("AutoMine", {
                 if not currentTargetBlock or not (currentTargetBlock.mineId and currentTargetBlock.blockKey and blockExists(currentTargetBlock.mineId, currentTargetBlock.blockKey)) then
                     currentTargetBlock = findPriorityBlockEnhanced()
                     
-                    -- Fallback to regular priority system if enhanced fails
+                    -- Fallback to the old system if the enhanced one fails completely
                     if not currentTargetBlock then
-                        currentTargetBlock = findPriorityBlock()
+                        currentTargetBlock = findPriorityBlockFallback()
                     end
                 end
 
@@ -382,6 +411,7 @@ selectblock:AddToggle("AutoMine", {
         end
     end
 })
+
 
 task.spawn(function()
     while true do
@@ -407,8 +437,6 @@ task.spawn(function()
             if blockId and BlockYRanges[blockId] then
                 local maxY = BlockYRanges[blockId].MaxY
                 local targetY = maxY > 98 and 98 or maxY
-                local selectedBlockExists = findSelectedBlocksAnywhere() ~= nil
-                local strategy = selectedBlockExists and "mining selected blocks at any Y" or "mining at target Y with highest X"
             end
         end
 
@@ -416,9 +444,11 @@ task.spawn(function()
     end
 end)
 
+
 -- Toggle for transparent blocks
 local transparentBlocksEnabled = false
 local transparentBlocksConnection = nil
+
 
 selectblock:AddToggle("TransparentBlocks", {
     Title = "Transparent Blocks",
@@ -461,7 +491,8 @@ selectblock:AddToggle("TransparentBlocks", {
                 task.cancel(transparentBlocksConnection)
                 transparentBlocksConnection = nil
             end
+            -- Revert transparency
+             makeBlocksTransparent()
         end
     end
 })
-
