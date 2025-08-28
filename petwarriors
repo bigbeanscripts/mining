@@ -287,9 +287,7 @@ local function findBlocksAtTargetYWithHighestX(targetY)
     return nil
 end
 
--- REWRITTEN: New auto-mine logic:
--- 1. Find and mine any selected block, anywhere in the mine.
--- 2. If no selected blocks exist, fall back to mining horizontally at the target Y level.
+
 local function findPriorityBlockEnhanced()
     -- Step 1: Search for any selected block at any height.
     local priorityBlock = findHighestPriorityBlockAnywhere()
@@ -297,19 +295,14 @@ local function findPriorityBlockEnhanced()
         return priorityBlock -- Found one, mine it.
     end
 
-    -- Step 2: No selected blocks were found. Fall back to horizontal mining.
-    -- Calculate the target Y based on the user's highest priority selection.
     local targetY = getPriorityBlockTargetY()
     if not targetY then
-        return nil -- Cannot proceed if no blocks are selected to get a target Y.
+        return nil .
     end
-
-    -- Mine horizontally at the calculated Y level (plus one, as per original logic).
     return findBlocksAtTargetYWithHighestX(targetY + 1)
 end
 
 
--- Find highest priority block (final fallback function if everything else fails)
 local function findPriorityBlockFallback()
     local allBlocks = getAllBlocks()
     if #allBlocks == 0 then return nil end
@@ -563,9 +556,18 @@ local function getClosestCleopatraQuest()
             local goal = qState.Goal or 0
             local progressRatio = goal > 0 and progress / goal or 0
 
-            if progressRatio > highestProgress then
-                highestProgress = progressRatio
-                closestQuest = qState
+            -- Get the quest title for pattern matching
+            local title = ""
+            if qState.Type and Quests[qState.Type] then
+                title = Quests[qState.Type].GetTitle(qState, goal)
+            end
+
+            -- Skip "Mine x Blocks" quests
+            if not title:match("Mine %d+ Blocks") then
+                if progressRatio > highestProgress then
+                    highestProgress = progressRatio
+                    closestQuest = qState
+                end
             end
         end
     end
