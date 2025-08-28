@@ -152,10 +152,10 @@ for _, areaData in pairs(MinesData) do
             if layer.LootPlan and layer.LootPlan.Rewards then
                 for blockId in pairs(layer.LootPlan.Rewards) do
                     if not BlockYRanges[blockId] then
-                        BlockYRanges[blockId] = {MinY = layer.MinY, MaxY = layer.MaxY}
+                        BlockYRanges[blockId] = {MinY = layer.MinY, MaxY = layer.MaxY - 5}
                     else
                         BlockYRanges[blockId].MinY = math.min(BlockYRanges[blockId].MinY, layer.MinY)
-                        BlockYRanges[blockId].MaxY = math.max(BlockYRanges[blockId].MaxY, layer.MaxY)
+                        BlockYRanges[blockId].MaxY = math.max(BlockYRanges[blockId].MaxY, layer.MaxY - 5)
                     end
                 end
             end
@@ -482,7 +482,7 @@ selectblock:AddToggle("TransparentBlocks", {
             transparentBlocksConnection = task.spawn(function()
                 while transparentBlocksEnabled do
                     makeBlocksTransparent()
-                    task.wait(2)
+                    task.wait(1)
                 end
             end)
         else
@@ -496,3 +496,283 @@ selectblock:AddToggle("TransparentBlocks", {
         end
     end
 })
+
+local CleopatraSection = Tabs.Mining:AddSection("Cleopatra's Quest")
+
+local cleopatraDifficulties = {"Easy", "Medium", "Hard"}
+local selectedCleopatraDifficulty = "Hard"
+
+CleopatraSection:AddDropdown("CleopatraDifficulty", {
+    Title = "Select Quest Difficulty",
+    Description = "Choose Cleopatra quest difficulty",
+    Values = cleopatraDifficulties,
+    Default = "Hard",
+    Callback = function(value)
+        selectedCleopatraDifficulty = value
+    end
+})
+
+local cleopatraQuestParagraph = CleopatraSection:AddParagraph("CleopatraQuestInfo", {
+    Title = "Current Cleopatra Quest",
+    Content = "No quest info yet.",
+    TitleAlignment = "Middle",
+    ContentAlignment = Enum.TextXAlignment.Left
+})
+
+local DataController = Knit.GetController("DataController")
+local QuestController = Knit.GetController("QuestController")
+local Quests = require(ReplicatedStorage.Shared.Data.Core.Quests)
+local QuestNPCService = ReplicatedStorage.Shared.Packages.Knit.Services.QuestNPCService
+
+local savedBlockPriorities = {}
+local function saveBlockPriorities()
+    savedBlockPriorities = {}
+    for k, v in pairs(blockPriorities) do
+        savedBlockPriorities[k] = v
+    end
+end
+
+local function restoreBlockPriorities()
+    blockPriorities = {}
+    for k, v in pairs(savedBlockPriorities) do
+        blockPriorities[k] = v
+    end
+    updateBlockPriorityDisplay()
+end
+
+local function setQuestBlockPriority(blockName)
+    blockPriorities = {}
+    blockPriorities[blockName] = 1
+    updateBlockPriorityDisplay()
+end
+
+local function getClosestCleopatraQuest()
+    local trackingUID = DataController:GetValue({"cleopatra", "TrackingUID"})
+    if not trackingUID then return nil end
+
+    local questData = QuestController:getFullQuest(trackingUID)
+    if not questData or not questData.Quests then return nil end
+
+    local closestQuest = nil
+    local highestProgress = -1
+
+    for _, questUID in questData.Quests do
+        local qState = QuestController:get(questUID)
+        if qState and not qState.Completed then
+            local progress = qState.Progress or 0
+            local goal = qState.Goal or 0
+            local progressRatio = goal > 0 and progress / goal or 0
+
+            if progressRatio > highestProgress then
+                highestProgress = progressRatio
+                closestQuest = qState
+            end
+        end
+    end
+
+    return closestQuest
+end
+
+local function printCleopatraQuest()
+    local data = DataController:GetValue({"cleopatra"})
+    if not data then
+        cleopatraQuestParagraph:SetValue("No Cleopatra quest data found.")
+        return
+    end
+
+    local difficulty = DataController:GetValue({"cleopatra", "Difficulty"})
+    local trackingUID = DataController:GetValue({"cleopatra", "TrackingUID"})
+    if not trackingUID then
+        cleopatraQuestParagraph:SetValue("No active quest selected.")
+        return
+    end
+
+    local questData = QuestController:getFullQuest(trackingUID)
+    if not questData then
+        cleopatraQuestParagraph:SetValue("Quest data not found.")
+        return
+    end
+
+    local info = "Difficulty: " .. tostring(difficulty or "None") .. "\n"
+    for _, questUID in questData.Quests do
+        local qState = QuestController:get(questUID)
+        local progress, goal, completed, title = 0, 0, false, tostring(questUID)
+        if qState then
+            progress = qState.Progress or 0
+            goal = qState.Goal or 0
+            completed = qState.Completed or false
+            if qState.Type and Quests[qState.Type] then
+                title = Quests[qState.Type].GetTitle(qState, goal)
+            end
+        end
+        info = info .. string.format("%s: %d / %d %s\n", title, progress, goal, completed and "(Completed)" or "")
+
+    end
+    cleopatraQuestParagraph:SetValue(info)
+end
+
+local autoCompleteCleopatra = false
+local autoCleopatraTask = nil
+
+
+CleopatraSection:AddToggle("AutoCompleteCleopatra", {
+    Title = "Auto Complete Quest",
+    Description = "Automatically complete Cleopatra's quest by finding the closest to completion",
+    Default = false,
+    Callback = function(value)
+        autoCompleteCleopatra = value
+
+        if value then
+            -- Save current block priorities
+            saveBlockPriorities()
+
+            autoCleopatraTask = task.spawn(function()
+                while autoCompleteCleopatra do
+                    local trackingUID = DataController:GetValue({"cleopatra", "TrackingUID"})
+
+                    if not trackingUID then
+                        -- No active quest, select one
+                        QuestNPCService.RE.Comm:FireServer("cleopatra-select", selectedCleopatraDifficulty)
+                        task.wait(2)
+                    else
+                        local questData = QuestController:getFullQuest(trackingUID)
+                        local allCompleted = true
+
+                        if questData and questData.Quests then
+                            for _, questUID in questData.Quests do
+                                local qState = QuestController:get(questUID)
+                                if qState and not qState.Completed then
+                                    allCompleted = false
+                                    break
+                                end
+                            end
+                        end
+
+                        if allCompleted then
+                            -- All quests completed, claim reward
+                            QuestNPCService.RE.Comm:FireServer("cleopatra-claim")
+                            task.wait(2)
+                        else
+                            -- Find the closest quest to completion
+                            local closestQuest = getClosestCleopatraQuest()
+                            if closestQuest and closestQuest.Type then
+                                local questTitle = ""
+                                if Quests[closestQuest.Type] then
+                                    questTitle = Quests[closestQuest.Type].GetTitle(closestQuest, closestQuest.Goal or 0)
+                                end
+
+                                -- Extract block name from quest title
+                                local blockName = nil
+                                -- Try different patterns to extract block name
+                                local patterns = {
+                                    "Mine (%d+) (.+)",  -- "Mine 100 Sand"
+                                    "Mine (.+)",        -- "Mine Sand"
+                                    "Collect (%d+) (.+)", -- "Collect 50 Iron"
+                                    "Collect (.+)"      -- "Collect Iron"
+                                }
+
+                                for _, pattern in ipairs(patterns) do
+                                    local match1, match2 = questTitle:match(pattern)
+                                    if match2 then
+                                        blockName = match2
+                                        break
+                                    elseif match1 and not tonumber(match1) then
+                                        blockName = match1
+                                        break
+                                    end
+                                end
+
+
+                                -- If the block name is "Blocks", change it to "Sand"
+                                if blockName == "Blocks" then
+                                    blockName = "Sand"
+                                end
+
+                                -- If we found a specific block name
+                                if blockName and blockName ~= "" then
+                                    setQuestBlockPriority(blockName)
+                                    print("Mining priority set to:", blockName)
+                                else
+                                    -- If no specific block name extracted, restore old priorities
+                                    restoreBlockPriorities()
+                                    print("Restored saved block priorities for generic quest")
+                                end
+
+                                -- Wait 1 second then enable Auto Mine toggle if not already enabled
+                                task.wait(1)
+                                if not autoMineEnabled then
+                                    -- Since we can't programmatically set the toggle, we'll just enable the functionality
+                                    autoMineEnabled = true
+                                    
+                                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                    if hrp then
+                                        local bv = Instance.new("BodyVelocity")
+                                        bv.Velocity = Vector3.new(0, 0, 0)
+                                        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+                                        bv.Parent = hrp
+
+                                        autoMineConnection = RunService.Heartbeat:Connect(function()
+                                            if not autoMineEnabled then return end
+
+                                            -- If no current target or current target is destroyed, find new target
+                                            if not currentTargetBlock or not (currentTargetBlock.mineId and currentTargetBlock.blockKey and blockExists(currentTargetBlock.mineId, currentTargetBlock.blockKey)) then
+                                                currentTargetBlock = findPriorityBlockEnhanced()
+                                                
+                                                -- Fallback to the old system if the enhanced one fails completely
+                                                if not currentTargetBlock then
+                                                    currentTargetBlock = findPriorityBlockFallback()
+                                                end
+                                            end
+
+                                            -- Teleport and mine the block
+                                            if currentTargetBlock and currentTargetBlock.position and currentTargetBlock.mineId and currentTargetBlock.blockKey then
+                                                hrp.CFrame = CFrame.new(currentTargetBlock.position)
+                                                MiningSiteRemote:FireServer(currentTargetBlock.mineId, currentTargetBlock.blockKey)
+                                            end
+                                        end)
+                                        
+                                        print("Auto Mine enabled automatically for quest completion")
+                                    end
+                                end
+                            end
+                        end
+                    end
+
+                    task.wait(2)
+                end
+            end)
+        else
+            if autoCleopatraTask then
+                task.cancel(autoCleopatraTask)
+                autoCleopatraTask = nil
+            end
+            -- Disable auto mine when turning off quest completion
+            if autoMineEnabled then
+                autoMineEnabled = false
+                if autoMineConnection then
+                    autoMineConnection:Disconnect()
+                    autoMineConnection = nil
+                end
+                currentTargetBlock = nil
+                
+                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    for _, bv in ipairs(hrp:GetChildren()) do
+                        if bv:IsA("BodyVelocity") then bv:Destroy() end
+                    end
+                end
+                print("Auto Mine disabled")
+            end
+            -- Restore original block priorities
+            restoreBlockPriorities()
+        end
+    end
+})
+
+-- Always update quest information every 2 seconds, regardless of toggle state
+task.spawn(function()
+    while true do
+        printCleopatraQuest()
+        task.wait(2)
+    end
+end)
