@@ -297,7 +297,7 @@ local function findPriorityBlockEnhanced()
 
     local targetY = getPriorityBlockTargetY()
     if not targetY then
-        return nil .
+        return nil
     end
     return findBlocksAtTargetYWithHighestX(targetY + 1)
 end
