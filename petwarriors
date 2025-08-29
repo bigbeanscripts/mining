@@ -48,7 +48,7 @@ local autoTeleportTask = nil
 
 teleport:AddToggle("AutoTeleport", {
     Title = "Auto Teleport",
-    Description = "Teleports you to the mining area if you're not currently in it. This is good if you are using auto load script settings on rejoin.",
+    Description = "Teleports you to the mining area if you're not currently in it. Use this if you have auto load (found in settings).",
     Default = false,
     Callback = function(value)
         autoTeleportEnabled = value
