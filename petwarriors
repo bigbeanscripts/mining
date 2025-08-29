@@ -70,6 +70,7 @@ teleport:AddToggle("AutoTeleport", {
                     end)
 
                     if not throneExists then
+                        wait(3)
                         local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                         if hrp then
                             hrp.CFrame = CFrame.new(
