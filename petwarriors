@@ -17,6 +17,7 @@ local Window = Library:Window{
 
 local Tabs = {
     Mining = Window:AddTab({ Title = "Mining", Icon = "pickaxe" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "gear" }),
 }
 
 
