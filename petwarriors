@@ -17,7 +17,9 @@ local Window = Library:Window{
 
 local Tabs = {
     Mining = Window:AddTab({ Title = "Mining", Icon = "pickaxe" }),
+    Enchant = Window:AddTab({ Title = "Enchant Pickaxe", Icon = "gem" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+
 }
 
 
@@ -843,6 +845,236 @@ task.spawn(function()
         task.wait(2)
     end
 end)
+
+local enchantPickaxeSection = Tabs.Enchant:AddSection("Enchant Pickaxe")
+
+local PickaxeEnchants = require(game:GetService("ReplicatedStorage").Shared.Enums.PickaxeEnchants)
+local PickaxeEnchantsData = require(game:GetService("ReplicatedStorage").Shared.Balancing.Shared.Minigames.Mines.PickaxeEnchants)
+
+local romanNumerals = {"I", "II", "III", "IV", "V", "VI"}
+
+-- Build enchant tier values for dropdown
+local enchantTierValues = {}
+for id, data in pairs(PickaxeEnchantsData) do
+    for i, tier in ipairs(data.Tiers) do
+        local roman = romanNumerals[i] or tostring(i)
+        table.insert(enchantTierValues, data.Name .. " " .. roman)
+    end
+end
+
+-- Store selected values
+local selectedEnchants = {}
+
+local SelectedEnchantsParagraph = enchantPickaxeSection:AddParagraph("EnchantValuesParagraph", {
+    Title = "Selected Enchants",
+    Content = "No enchants selected.",
+    TitleAlignment = "Middle",
+    ContentAlignment = Enum.TextXAlignment.Left
+})
+
+enchantPickaxeSection:AddDropdown("SelectEnchant", {
+    Title = "Select Enchant",
+    Description = "Choose one or more enchants and tiers.",
+    Values = enchantTierValues,
+    Multi = true,
+    Searchable = true,
+    Default = {},
+    Callback = function(value)
+        selectedEnchants = value
+        local selectedList = {}
+        for k, v in pairs(value) do
+            if v then table.insert(selectedList, k) end
+        end
+        if #selectedList > 0 then
+            SelectedEnchantsParagraph:SetValue(table.concat(selectedList, "\n"))
+        else
+            SelectedEnchantsParagraph:SetValue("No enchants selected.")
+        end
+    end
+})
+
+-- ...existing code...
+
+local PickaxeNames = require(game:GetService("ReplicatedStorage").Shared.Enums.Pickaxes)
+local PickaxeController = require(game:GetService("Players").LocalPlayer.PlayerScripts
+    .Client.Controllers.Shared.Core.Pickaxe.PickaxeController)
+
+-- Reverse lookup for enchant names
+local enchantNames = {}
+for name, id in pairs(PickaxeEnchants) do
+    enchantNames[id] = name
+end
+
+-- Reverse lookup for pickaxe names
+local pickaxeNames = {}
+for name, id in pairs(PickaxeNames) do
+    pickaxeNames[id] = name
+end
+
+local romanNumerals = {"I", "II", "III", "IV", "V", "VI"}
+
+local function getEnchantString(tbl)
+    if tbl and tbl.E and tbl.T then
+        local enchName = enchantNames[tbl.E] or tostring(tbl.E)
+        local roman = romanNumerals[tbl.T] or tostring(tbl.T)
+        return enchName .. " " .. roman
+    end
+    return ""
+end
+
+local function refreshPickaxeDropdown(dropdown)
+    local pickaxeDropdownValues = {}
+    local uuidLookup = {}
+    local nameToUUIDs = {}
+
+    for uid, data in pairs(PickaxeController.Storage) do
+        local pickaxeName = pickaxeNames[data.ID] or "Unknown"
+        local enchantStr = ""
+        if data.E then
+            enchantStr = getEnchantString(data.E)
+        end
+        local display = enchantStr ~= "" and (pickaxeName .. " | Enchant: " .. enchantStr) or pickaxeName
+
+        -- Only add unique display names to dropdown
+        if not uuidLookup[display] then
+            table.insert(pickaxeDropdownValues, display)
+            uuidLookup[display] = {}
+        end
+        table.insert(uuidLookup[display], uid)
+        nameToUUIDs[display] = uuidLookup[display]
+    end
+
+    dropdown:SetValues(pickaxeDropdownValues)
+    dropdown._uuidLookup = nameToUUIDs -- store for callback use
+end
+
+local pickaxeDropdown -- forward declaration
+
+pickaxeDropdown = enchantPickaxeSection:AddDropdown("SelectPickaxe", {
+    Title = "Select Pickaxe",
+    Description = "Choose one or more pickaxes.",
+    Values = {}, -- will be set by refresh
+    Multi = true,
+    Searchable = true,
+    Default = {},
+    Callback = function(value, changedKey)
+        if changedKey and pickaxeDropdown._uuidLookup then
+            for _, uuid in ipairs(pickaxeDropdown._uuidLookup[changedKey]) do
+            end
+        end
+    end
+})
+
+-- Initial population
+refreshPickaxeDropdown(pickaxeDropdown)
+
+enchantPickaxeSection:AddButton({
+    Title = "Update Pickaxes",
+    Description = "Refresh the pickaxe dropdown",
+    Callback = function()
+        refreshPickaxeDropdown(pickaxeDropdown)
+    end
+})
+
+
+local PickaxeEnchantService = ReplicatedStorage.Shared.Packages.Knit.Services.PickaxeEnchantService
+
+local autoEnchantEnabled = false
+local autoEnchantTask = nil
+
+local function parseSelectedEnchants()
+    local selectedEnchants = {}
+    local enchantText = SelectedEnchantsParagraph.Value
+    for line in enchantText:gmatch("[^\n]+") do
+        table.insert(selectedEnchants, line)
+    end
+    return selectedEnchants
+end
+
+enchantPickaxeSection:Toggle("AutoEnchant", {
+    Title = "Auto Enchant",
+    Description = "Automatically enchants selected pickaxes until the selected enchant and tier is obtained.",
+    Default = false,
+    Callback = function(value)
+        autoEnchantEnabled = value
+
+        if autoEnchantEnabled then
+            if autoEnchantTask then task.cancel(autoEnchantTask) end
+            autoEnchantTask = task.spawn(function()
+                local completedPickaxes = {}
+
+                while autoEnchantEnabled do
+                    local selectedPickaxes = {}
+                    local pickaxeValues = pickaxeDropdown.Value
+
+                    -- For each selected dropdown value, get all UUIDs for that pickaxe name
+                    if type(pickaxeValues) == "table" then
+                        for k, v in pairs(pickaxeValues) do
+                            if v and pickaxeDropdown._uuidLookup then
+                                for _, uuid in ipairs(pickaxeDropdown._uuidLookup[k]) do
+                                    table.insert(selectedPickaxes, uuid)
+                                end
+                            end
+                        end
+                    elseif pickaxeValues and pickaxeDropdown._uuidLookup then
+                        for _, uuid in ipairs(pickaxeDropdown._uuidLookup[pickaxeValues]) do
+                            table.insert(selectedPickaxes, uuid)
+                        end
+                    end
+
+                    local selectedEnchantsList = parseSelectedEnchants()
+
+                    for _, uuid in ipairs(selectedPickaxes) do
+                        -- Skip if already completed
+                        if completedPickaxes[uuid] then
+                            continue
+                        end
+
+                        local pickaxeData = PickaxeController.Storage[uuid]
+                        if not pickaxeData then continue end
+
+                        local alreadyHasTarget = false
+                        if pickaxeData.E then
+                            local currentEnchantId = pickaxeData.E.E
+                            local currentTier = pickaxeData.E.T
+                            local currentEnchantName = enchantNames[currentEnchantId] or tostring(currentEnchantId)
+                            local currentTierRoman = romanNumerals[currentTier] or tostring(currentTier)
+
+                            -- Check if current enchant matches any target
+                            for _, target in ipairs(selectedEnchantsList) do
+                                local split = {}
+                                for word in target:gmatch("[^%s]+") do table.insert(split, word) end
+                                local targetEnchant, targetTier = split[1], split[2]
+
+                                if currentEnchantName == targetEnchant and currentTierRoman == targetTier then
+                                    alreadyHasTarget = true
+                                    completedPickaxes[uuid] = true
+                                    break
+                                end
+                            end
+                        end
+
+                        -- Only roll if it doesn't have target
+                        if not alreadyHasTarget then
+                            local args = {uuid, false}
+                            pcall(function()
+                                PickaxeEnchantService.RF.roll:InvokeServer(unpack(args))
+                            end)
+                        end
+                    end
+
+                    task.wait(1)
+                end
+            end)
+        else
+            if autoEnchantTask then
+                task.cancel(autoEnchantTask)
+                autoEnchantTask = nil
+            end
+        end
+    end
+})
+
 
 -- Hand the library over to our managers
 SaveManager:SetLibrary(Library)
