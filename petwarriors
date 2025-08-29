@@ -17,9 +17,28 @@ local Window = Library:Window{
 
 local Tabs = {
     Mining = Window:AddTab({ Title = "Mining", Icon = "pickaxe" }),
-    Settings = Window:AddTab({ Title = "Settings", Icon = "gear" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
 }
 
+
+-- Services and Controllers (defined once)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Function to click top-right
+local function clickTopRight()
+    local screenSize = workspace.CurrentCamera.ViewportSize
+    local x = screenSize.X - 5  -- slightly inside from the right edge
+    local y = 5                 -- slightly down from the top
+
+    -- Mouse down + mouse up
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 1)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 1)
+
+    print("[AutoClick] Clicked at top-right:", x, y)
+end
 
 local selectblock = Tabs.Mining:AddSection("Auto Mine")
 
